@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"os"
@@ -65,8 +66,10 @@ type InlineKeyboardButton struct {
 }
 
 type SendMessageResponse struct {
-	OK     bool   `json:"ok"`
-	Result Result `json:"result"`
+	OK          bool   `json:"ok"`
+	Result      Result `json:"result"`
+	ErrorCode   int    `json:"error_code,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 type Result struct {
@@ -248,7 +251,7 @@ func (b *Bot) sendMessage(story *Story) error {
 
 	req := SendMessageRequest{
 		ChatID:              b.config.ChatID,
-		Text:                fmt.Sprintf("<b>%s</b>  %s", story.Title, story.URL),
+		Text:                fmt.Sprintf("<b>%s</b>  %s", html.EscapeString(story.Title), story.URL),
 		ParseMode:           "HTML",
 		ReplyMarkup:         story.getReplyMarkup(b),
 		DisableNotification: true,
@@ -271,7 +274,7 @@ func (b *Bot) sendMessage(story *Story) error {
 	}
 
 	if !response.OK {
-		return fmt.Errorf("telegram API error in send message")
+		return fmt.Errorf("telegram API error in send message: %d - %s", response.ErrorCode, response.Description)
 	}
 
 	story.MessageID = response.Result.MessageID
@@ -286,7 +289,7 @@ func (b *Bot) editMessage(story *Story) error {
 	req := EditMessageTextRequest{
 		ChatID:      b.config.ChatID,
 		MessageID:   story.MessageID,
-		Text:        fmt.Sprintf("<b>%s</b>  %s", story.Title, story.URL),
+		Text:        fmt.Sprintf("<b>%s</b>  %s", html.EscapeString(story.Title), story.URL),
 		ParseMode:   "HTML",
 		ReplyMarkup: story.getReplyMarkup(b),
 	}
@@ -351,7 +354,7 @@ func (b *Bot) poll() error {
 	}
 
 	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 10)
+	semaphore := make(chan struct{}, 3) // Reduce concurrency to avoid rate limits
 
 	for _, storyID := range topStories {
 		wg.Add(1)
@@ -373,6 +376,9 @@ func (b *Bot) poll() error {
 				} else {
 					log.Printf("Sent new story: %d - %s", story.ID, story.Title)
 				}
+				
+				// Add delay between requests to avoid rate limiting
+				time.Sleep(200 * time.Millisecond)
 			} else {
 				story, err := b.getStoryDetails(id)
 				if err != nil {
@@ -386,6 +392,9 @@ func (b *Bot) poll() error {
 				} else {
 					log.Printf("Updated story: %d - %s", story.ID, story.Title)
 				}
+				
+				// Add delay between requests to avoid rate limiting
+				time.Sleep(200 * time.Millisecond)
 			}
 		}(storyID)
 	}
