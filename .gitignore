@@ -1,0 +1,27 @@
+# Binaries
+tg-hacker-news
+*.exe
+
+# Database files
+*.db
+*.db-journal
+data/
+
+# Environment variables
+.env
+
+# Go build cache
+.cache/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

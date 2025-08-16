@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  tg-hacker-news:
+    build: .
+    container_name: hacker-news-bot
+    restart: unless-stopped
+    environment:
+      - BOT_KEY=${BOT_KEY}
+      - CHAT_ID=${CHAT_ID:-@hacker_news_wooo}
+      - DB_PATH=/app/data/stories.db
+    volumes:
+      - tghnbot_volume:/app/data
+    networks:
+      - hacker-news-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "test", "-f", "/app/data/stories.db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  hacker-news-net:
+    driver: bridge
+
+volumes:
+  tghnbot_volume:
+    driver: local
