@@ -150,7 +150,7 @@ func (s *StorageData) save(filePath string) error {
 }
 
 func (b *Bot) telegramAPI(method string) string {
-	return TelegramAPIBase + b.config.BotKey + "/" + method
+	return TelegramAPIBase + "bot" + b.config.BotKey + "/" + method
 }
 
 func (b *Bot) newsURL(id int64) string {
