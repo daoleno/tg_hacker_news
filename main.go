@@ -229,10 +229,9 @@ func (s *Story) getReplyMarkup(b *Bot) InlineKeyboardMarkup {
 
 func (b *Bot) saveStory(story *Story) error {
 	b.storage.mutex.Lock()
-	defer b.storage.mutex.Unlock()
-
 	story.LastSave = time.Now()
 	b.storage.Stories[story.ID] = story
+	b.storage.mutex.Unlock()
 	return b.storage.save(b.config.DataPath)
 }
 
@@ -335,9 +334,8 @@ func (b *Bot) deleteMessage(story *Story) error {
 	}
 
 	b.storage.mutex.Lock()
-	defer b.storage.mutex.Unlock()
-
 	delete(b.storage.Stories, story.ID)
+	b.storage.mutex.Unlock()
 	return b.storage.save(b.config.DataPath)
 }
 
@@ -376,7 +374,7 @@ func (b *Bot) poll() error {
 				} else {
 					log.Printf("Sent new story: %d - %s", story.ID, story.Title)
 				}
-				
+
 				// Add delay between requests to avoid rate limiting
 				time.Sleep(200 * time.Millisecond)
 			} else {
@@ -392,7 +390,7 @@ func (b *Bot) poll() error {
 				} else {
 					log.Printf("Updated story: %d - %s", story.ID, story.Title)
 				}
-				
+
 				// Add delay between requests to avoid rate limiting
 				time.Sleep(200 * time.Millisecond)
 			}
@@ -405,7 +403,7 @@ func (b *Bot) poll() error {
 
 func (b *Bot) cleanup() error {
 	oneDayAgo := time.Now().Add(-CleanupInterval)
-	
+
 	b.storage.mutex.RLock()
 	var oldStories []*Story
 	for _, story := range b.storage.Stories {
