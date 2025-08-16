@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 const (
@@ -29,9 +26,9 @@ const (
 )
 
 type Config struct {
-	BotKey string
-	ChatID string
-	DBPath string
+	BotKey   string
+	ChatID   string
+	DataPath string
 }
 
 type Story struct {
@@ -41,8 +38,13 @@ type Story struct {
 	Descendants int64     `json:"descendants"`
 	Score       int64     `json:"score"`
 	Type        string    `json:"type"`
-	MessageID   int64     `json:"-"`
-	LastSave    time.Time `json:"-"`
+	MessageID   int64     `json:"message_id"`
+	LastSave    time.Time `json:"last_save"`
+}
+
+type StorageData struct {
+	Stories map[int64]*Story `json:"stories"`
+	mutex   sync.RWMutex     `json:"-"`
 }
 
 type SendMessageRequest struct {
@@ -92,36 +94,56 @@ type DeleteMessageResponse struct {
 
 type Bot struct {
 	config     Config
-	db         *sql.DB
+	storage    *StorageData
 	httpClient *http.Client
 }
 
 func NewBot(config Config) (*Bot, error) {
-	db, err := sql.Open("sqlite3", config.DBPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+	storage := &StorageData{
+		Stories: make(map[int64]*Story),
 	}
 
-	if err := createTables(db); err != nil {
-		return nil, fmt.Errorf("failed to create tables: %w", err)
+	// Load existing data if file exists
+	if err := storage.load(config.DataPath); err != nil {
+		log.Printf("Warning: failed to load existing data: %v", err)
 	}
 
 	return &Bot{
 		config:     config,
-		db:         db,
+		storage:    storage,
 		httpClient: &http.Client{Timeout: DefaultTimeout},
 	}, nil
 }
 
-func createTables(db *sql.DB) error {
-	query := `
-	CREATE TABLE IF NOT EXISTS stories (
-		id INTEGER PRIMARY KEY,
-		message_id INTEGER NOT NULL,
-		last_save DATETIME DEFAULT CURRENT_TIMESTAMP
-	)`
-	_, err := db.Exec(query)
-	return err
+func (s *StorageData) load(filePath string) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // File doesn't exist yet, that's ok
+		}
+		return err
+	}
+	defer file.Close()
+
+	return json.NewDecoder(file).Decode(s)
+}
+
+func (s *StorageData) save(filePath string) error {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	file, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(s)
 }
 
 func (b *Bot) telegramAPI(method string) string {
@@ -203,22 +225,20 @@ func (s *Story) getReplyMarkup(b *Bot) InlineKeyboardMarkup {
 }
 
 func (b *Bot) saveStory(story *Story) error {
-	query := `INSERT OR REPLACE INTO stories (id, message_id, last_save) VALUES (?, ?, ?)`
-	_, err := b.db.Exec(query, story.ID, story.MessageID, time.Now())
-	return err
+	b.storage.mutex.Lock()
+	defer b.storage.mutex.Unlock()
+
+	story.LastSave = time.Now()
+	b.storage.Stories[story.ID] = story
+	return b.storage.save(b.config.DataPath)
 }
 
-func (b *Bot) getStoredStory(id int64) (*Story, error) {
-	query := `SELECT id, message_id, last_save FROM stories WHERE id = ?`
-	row := b.db.QueryRow(query, id)
+func (b *Bot) getStoredStory(id int64) (*Story, bool) {
+	b.storage.mutex.RLock()
+	defer b.storage.mutex.RUnlock()
 
-	var story Story
-	err := row.Scan(&story.ID, &story.MessageID, &story.LastSave)
-	if err != nil {
-		return nil, err
-	}
-
-	return &story, nil
+	story, exists := b.storage.Stories[id]
+	return story, exists
 }
 
 func (b *Bot) sendMessage(story *Story) error {
@@ -311,9 +331,11 @@ func (b *Bot) deleteMessage(story *Story) error {
 		return fmt.Errorf("telegram API error in delete message: %s", response.Description)
 	}
 
-	query := `DELETE FROM stories WHERE id = ?`
-	_, err = b.db.Exec(query, story.ID)
-	return err
+	b.storage.mutex.Lock()
+	defer b.storage.mutex.Unlock()
+
+	delete(b.storage.Stories, story.ID)
+	return b.storage.save(b.config.DataPath)
 }
 
 func (b *Bot) shouldIgnoreDeleteError(resp *DeleteMessageResponse) bool {
@@ -338,8 +360,8 @@ func (b *Bot) poll() error {
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
 
-			storedStory, err := b.getStoredStory(id)
-			if err == sql.ErrNoRows {
+			storedStory, exists := b.getStoredStory(id)
+			if !exists {
 				story, err := b.getStoryDetails(id)
 				if err != nil {
 					log.Printf("Error getting story details for %d: %v", id, err)
@@ -351,8 +373,6 @@ func (b *Bot) poll() error {
 				} else {
 					log.Printf("Sent new story: %d - %s", story.ID, story.Title)
 				}
-			} else if err != nil {
-				log.Printf("Error checking stored story %d: %v", id, err)
 			} else {
 				story, err := b.getStoryDetails(id)
 				if err != nil {
@@ -376,34 +396,27 @@ func (b *Bot) poll() error {
 
 func (b *Bot) cleanup() error {
 	oneDayAgo := time.Now().Add(-CleanupInterval)
-	query := `SELECT id, message_id FROM stories WHERE last_save <= ?`
-	rows, err := b.db.Query(query, oneDayAgo)
-	if err != nil {
-		return fmt.Errorf("failed to query old stories: %w", err)
-	}
-	defer rows.Close()
-
-	var stories []Story
-	for rows.Next() {
-		var story Story
-		if err := rows.Scan(&story.ID, &story.MessageID); err != nil {
-			log.Printf("Error scanning story: %v", err)
-			continue
+	
+	b.storage.mutex.RLock()
+	var oldStories []*Story
+	for _, story := range b.storage.Stories {
+		if story.LastSave.Before(oneDayAgo) {
+			oldStories = append(oldStories, story)
 		}
-		stories = append(stories, story)
 	}
+	b.storage.mutex.RUnlock()
 
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, 5)
 
-	for _, story := range stories {
+	for _, story := range oldStories {
 		wg.Add(1)
-		go func(s Story) {
+		go func(s *Story) {
 			defer wg.Done()
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
 
-			if err := b.deleteMessage(&s); err != nil {
+			if err := b.deleteMessage(s); err != nil {
 				log.Printf("Error deleting message for story %d: %v", s.ID, err)
 			} else {
 				log.Printf("Deleted old story: %d", s.ID)
@@ -442,7 +455,7 @@ func (b *Bot) run() {
 }
 
 func (b *Bot) Close() error {
-	return b.db.Close()
+	return b.storage.save(b.config.DataPath)
 }
 
 func loadConfig() Config {
@@ -456,15 +469,15 @@ func loadConfig() Config {
 		chatID = "@@hacker_news_wooo"
 	}
 
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = "stories.db"
+	dataPath := os.Getenv("DATA_PATH")
+	if dataPath == "" {
+		dataPath = "stories.json"
 	}
 
 	return Config{
-		BotKey: botKey,
-		ChatID: chatID,
-		DBPath: dbPath,
+		BotKey:   botKey,
+		ChatID:   chatID,
+		DataPath: dataPath,
 	}
 }
 

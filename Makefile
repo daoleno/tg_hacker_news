@@ -15,7 +15,7 @@ run: build
 # Clean build artifacts
 clean:
 	rm -f $(BINARY_NAME)
-	rm -f *.db
+	rm -f *.json
 
 # Build Docker image
 docker-build:

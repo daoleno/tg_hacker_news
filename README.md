@@ -9,7 +9,7 @@ A Telegram bot that fetches top stories from Hacker News and posts them to a Tel
 - 🤖 Posts to Telegram channel with inline buttons
 - 🔄 Real-time updates of scores and comment counts
 - 🧹 Auto-cleanup of messages older than 24 hours
-- 💾 SQLite database for tracking posted stories
+- 💾 JSON file storage for tracking posted stories
 - 🚀 Single Go binary with zero dependencies
 
 ## Quick Start
@@ -20,7 +20,7 @@ A Telegram bot that fetches top stories from Hacker News and posts them to a Tel
 |----------|-------------|---------|----------|
 | `BOT_KEY` | Telegram bot token | - | ✅ |
 | `CHAT_ID` | Target channel/chat ID | `@hacker_news_wooo` | ❌ |
-| `DB_PATH` | SQLite database file path | `stories.db` | ❌ |
+| `DATA_PATH` | JSON data file path | `stories.json` | ❌ |
 
 ### Local Development
 
@@ -100,18 +100,24 @@ Each story is posted with:
 
 1. **Polling**: Every 5 minutes, fetches top 30 stories from Hacker News API
 2. **Filtering**: Only posts stories that meet quality thresholds
-3. **Tracking**: Stores story ID and message ID in SQLite database
+3. **Tracking**: Stores story ID and message ID in JSON file
 4. **Updates**: If story already posted, updates the message with new scores
 5. **Cleanup**: Deletes messages older than 24 hours to keep channel clean
 
-## Database Schema
+## Data Storage
 
-```sql
-CREATE TABLE stories (
-    id INTEGER PRIMARY KEY,           -- Hacker News story ID
-    message_id INTEGER NOT NULL,      -- Telegram message ID
-    last_save DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+Stories are stored in a JSON file with the following structure:
+
+```json
+{
+  "stories": {
+    "123456": {
+      "id": 123456,
+      "message_id": 789,
+      "last_save": "2023-12-01T10:00:00Z"
+    }
+  }
+}
 ```
 
 ## API Endpoints Used
@@ -131,8 +137,8 @@ Check bot status:
 # View logs
 docker-compose logs -f
 
-# Check database
-sqlite3 data/stories.db "SELECT COUNT(*) FROM stories;"
+# Check data file
+cat data/stories.json | jq '.stories | length'
 
 # Monitor bot health
 curl -s "https://api.telegram.org/bot$BOT_KEY/getMe"

@@ -1,13 +1,10 @@
 # Build stage
 FROM golang:1.21-alpine AS builder
 
-# Install build dependencies
-RUN apk add --no-cache gcc musl-dev sqlite-dev
-
 WORKDIR /app
 
 # Copy go mod files
-COPY go.mod go.sum ./
+COPY go.mod ./
 
 # Download dependencies
 RUN go mod download
@@ -15,8 +12,8 @@ RUN go mod download
 # Copy source code
 COPY main.go ./
 
-# Build the binary
-RUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags '-linkmode external -extldflags "-static"' -o tg-hacker-news main.go
+# Build the binary (no CGO needed)
+RUN CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-extldflags "-static"' -o tg-hacker-news main.go
 
 # Final stage
 FROM alpine:latest
@@ -45,11 +42,11 @@ RUN chown appuser:appgroup tg-hacker-news && \
 USER appuser
 
 # Set environment variables
-ENV DB_PATH=/app/data/stories.db
+ENV DATA_PATH=/app/data/stories.json
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD [ -f /app/data/stories.db ] || exit 1
+  CMD [ -f /app/data/stories.json ] || exit 1
 
 # Expose port (optional, for future web interface)
 EXPOSE 8080

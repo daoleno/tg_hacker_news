@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   tg-hacker-news:
     build: .
@@ -8,7 +6,7 @@ services:
     environment:
       - BOT_KEY=${BOT_KEY}
       - CHAT_ID=${CHAT_ID:-@hacker_news_wooo}
-      - DB_PATH=/app/data/stories.db
+      - DATA_PATH=/app/data/stories.json
     volumes:
       - tghnbot_volume:/app/data
     networks:
@@ -19,7 +17,7 @@ services:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD", "test", "-f", "/app/data/stories.db"]
+      test: ["CMD", "test", "-f", "/app/data/stories.json"]
       interval: 30s
       timeout: 10s
       retries: 3

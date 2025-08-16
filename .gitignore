@@ -2,9 +2,8 @@
 tg-hacker-news
 *.exe
 
-# Database files
-*.db
-*.db-journal
+# Data files
+*.json
 data/
 
 # Environment variables
